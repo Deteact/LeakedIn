@@ -1,4 +1,3 @@
-// content.js
 if (typeof window.nonLatinToLatinMap === "undefined") {
   window.nonLatinToLatinMap = {
     "А": "A",   "Б": "B",   "В": "V",   "Г": "G",   "Д": "D",   "Е": "E",   "Ё": "Yo",
@@ -61,27 +60,41 @@ function sleepRandom(minMs, maxMs) {
   const rnd = Math.floor(Math.random() * (delta + 1)) + minMs
   return new Promise(resolve => setTimeout(resolve, rnd))
 }
-function parseCurrentPage(postfix, delimiter) {
-  const results = document.querySelectorAll("[data-chameleon-result-urn]")
+async function parseCurrentPage(postfix, delimiter) {
+  const results = document.querySelectorAll('div[data-view-name="people-search-result"]')
   const users = []
   results.forEach(result => {
-    const urn = result.getAttribute("data-chameleon-result-urn")
-    if (!urn || urn.includes("headless")) return
-    const spans = result.querySelectorAll("span[aria-hidden=true]")
-    if (spans.length === 0) return
-    const fullNameRaw = spans[0].innerText.trim()
+    const titleLink = result.querySelector('a[data-view-name="search-result-lockup-title"]')
+    if (!titleLink) return
+    const fullNameRaw = titleLink.textContent.trim()
     const fullName = transliterateNonLatin(fullNameRaw)
-    let link = ""
-    const linkElem = spans[0].closest("a")
-    if (linkElem) {
-      link = linkElem.href.split("?")[0]
+    let link = titleLink.getAttribute("data-original-url") || titleLink.href
+    if (link) {
+      link = link.split("?")[0]
     }
-    const infoElem = result.querySelector("div.t-14.t-black.t-normal")
-    const info = infoElem ? infoElem.innerText.trim() : ""
-    const geoElem = result.querySelector("div.t-14.t-normal:not(.t-black)")
-    const geoloc = geoElem ? geoElem.innerText.trim() : ""
-    const currElem = result.querySelector(".entity-result__summary--2-lines")
-    const current = currElem ? currElem.innerText.trim() : ""
+    const allParagraphs = Array.from(result.querySelectorAll("p"))
+    let info = ""
+    let geoloc = ""
+    let current = ""
+    const contentParagraphs = allParagraphs.filter(p => {
+      const text = p.innerText.trim()
+      if (p.querySelector('a[data-view-name="search-result-lockup-title"]')) return false
+      if (!text || text.match(/^[•\s]*\d(st|nd|rd|th)\+?$/)) return false
+      return true
+    })
+    contentParagraphs.forEach((p, index) => {
+      const text = p.innerText.trim().replace(/\n+/g, "; ").replace(/\s+/g, " ").replace(/;\s+;/g, ";").trim()
+      if (!text) return
+      if (text.startsWith("Current:") || text.startsWith("Past:")) {
+        current = text
+      }
+      else if (index === 0) {
+        info = text
+      }
+      else if (index === 1 && !text.startsWith("Current:") && !text.startsWith("Past:")) {
+        geoloc = text
+      }
+    })
     const words = fullName.split(" ")
     let email = ""
     if (words.length >= 2) {
@@ -120,6 +133,17 @@ function triggerDownload(tsvContent, filename) {
 if (typeof window.leakedInParseInProgress === "undefined") {
   window.leakedInParseInProgress = false
 }
+async function waitForSearchResults() {
+  for (let i = 0; i < 20; i++) {
+    const results = document.querySelectorAll('div[data-view-name="people-search-result"]')
+    if (results.length > 0) {
+      await new Promise(r => setTimeout(r, 500))
+      return true
+    }
+    await new Promise(r => setTimeout(r, 300))
+  }
+  return false
+}
 async function clickPageButton(pageNum) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const selector = `button[aria-label="Page ${pageNum}"]:not([disabled])`
@@ -127,7 +151,9 @@ async function clickPageButton(pageNum) {
     if (btn) {
       btn.scrollIntoView({ behavior: "smooth", block: "center" })
       btn.click()
-      await new Promise(r => setTimeout(r, 2000))
+      await new Promise(r => setTimeout(r, 1000))
+      await waitForSearchResults()
+      await new Promise(r => setTimeout(r, 500))
       return true
     }
     window.scrollBy(0, window.innerHeight)
@@ -143,11 +169,21 @@ async function leakedInParseListener(request, sender, sendResponse) {
     let allUsers = []
     let totalPeopleCount = 0
     let pagesDone = 0
-    // Navigate to starting page
-    await clickPageButton(from)
+    if (from > 1) {
+      await clickPageButton(from)
+    } else {
+      await waitForSearchResults()
+      await new Promise(r => setTimeout(r, 500))
+    }
     let pageNum = from
     while (pageNum <= to) {
-      const users = parseCurrentPage(postfix, delimiter)
+      window.scrollTo(0, 0)
+      await new Promise(r => setTimeout(r, 300))
+      window.scrollTo(0, document.body.scrollHeight)
+      await new Promise(r => setTimeout(r, 500))
+      window.scrollTo(0, 0)
+      await new Promise(r => setTimeout(r, 300))
+      const users = await parseCurrentPage(postfix, delimiter)
       allUsers = allUsers.concat(users)
       totalPeopleCount += users.length
       pagesDone++
@@ -167,31 +203,57 @@ async function leakedInParseListener(request, sender, sendResponse) {
       const params = new URLSearchParams(url.search)
       const keyword = params.get("keywords") || ""
       let companyIds = []
-      let companyNames = []
+      let companyNamesArray = []
       const companyParam = params.get("currentCompany")
       if (companyParam) {
         try {
           companyIds = JSON.parse(companyParam)
         } catch (e) {
-          companyIds = companyParam.replace(/\[|\]|"/g, "").split(",")
+          companyIds = companyParam.replace(/\[|\]|"/g, "").split(",").filter(x => x)
         }
       }
-      companyIds.forEach(id => {
-        const input = document.querySelector(`input#currentCompany-${id}`)
-        if (input) {
-          const li = input.closest("li.search-reusables__collection-values-item")
-          if (li) {
-            const nameSpan = li.querySelector("span[aria-hidden=\"true\"]")
-            const name = nameSpan ? nameSpan.innerText.trim().replace(/\s+/g, " ") : id
-            companyNames.push(`${name} [${id}]`)
-          } else {
-            companyNames.push(`[${id}]`)
+      let needToCloseDropdown = false
+      const allFilterButtons = document.querySelectorAll('div[data-view-name="search-filter-top-bar-select"]')
+      for (const btn of allFilterButtons) {
+        const label = btn.querySelector("label")
+        if (label && label.innerText.includes("Current companies")) {
+          const checkbox = btn.querySelector('input[type="checkbox"]')
+          if (checkbox && checkbox.checked && btn.getAttribute("aria-expanded") === "false") {
+            btn.click()
+            needToCloseDropdown = true
+            await new Promise(r => setTimeout(r, 800))
+            break
           }
-        } else {
-          companyNames.push(`[${id}]`)
         }
+      }
+      const checkedCompanyItems = document.querySelectorAll('div[data-view-name="search-filter-top-bar-menu-item"][aria-checked="true"]')
+      checkedCompanyItems.forEach(item => {
+        const paragraphs = item.querySelectorAll("p")
+        paragraphs.forEach(p => {
+          const text = p.innerText.trim()
+          if (text && text.length > 1 && text.length < 100 && !text.match(/^\d+$/) && !text.includes('•') && !companyNamesArray.includes(text)) {
+            companyNamesArray.push(text)
+          }
+        })
       })
-      const companyNamesString = companyNames.join(", ")
+      if (needToCloseDropdown) {
+        for (const btn of allFilterButtons) {
+          const label = btn.querySelector("label")
+          if (label && label.innerText.includes("Current companies") && btn.getAttribute("aria-expanded") === "true") {
+            btn.click()
+            await new Promise(r => setTimeout(r, 200))
+            break
+          }
+        }
+      }
+      let companyNamesString = ""
+      if (companyNamesArray.length > 0 && companyIds.length > 0) {
+        companyNamesString = `${companyNamesArray.join(", ")} [${companyIds.join(", ")}]`
+      } else if (companyNamesArray.length > 0) {
+        companyNamesString = companyNamesArray.join(", ")
+      } else if (companyIds.length > 0) {
+        companyNamesString = `[${companyIds.join(", ")}]`
+      }
       chrome.runtime.sendMessage({
         action: "saveSearchHistory",
         data: {
