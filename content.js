@@ -60,7 +60,7 @@ function sleepRandom(minMs, maxMs) {
   const rnd = Math.floor(Math.random() * (delta + 1)) + minMs
   return new Promise(resolve => setTimeout(resolve, rnd))
 }
-async function parseCurrentPage(postfix, delimiter) {
+async function parseCurrentPage(postfix, delimiter, emailSettings) {
   const results = document.querySelectorAll('div[data-view-name="people-search-result"]')
   const users = []
   results.forEach(result => {
@@ -97,11 +97,34 @@ async function parseCurrentPage(postfix, delimiter) {
     })
     const words = fullName.split(" ")
     let email = ""
+    let cleanPostfix = postfix ? postfix.replace(/^@/, "") : "example.com"
+    
     if (words.length >= 2) {
-      let cleanPostfix = postfix ? postfix.replace(/^@/, "") : "example.com"
-      email = `${words[0][0]}${delimiter}${words[1]}@${cleanPostfix}`.toLowerCase()
+      let firstName = words[0]
+      let lastName = words[words.length - 1]
+      
+      if (emailSettings) {
+        const firstNameChars = typeof emailSettings.firstNameChars === 'number' ? emailSettings.firstNameChars : 1
+        const lastNameChars = typeof emailSettings.lastNameChars === 'number' ? emailSettings.lastNameChars : 0
+        const swapNames = emailSettings.swapNames === true
+        
+        if (firstNameChars > 0) {
+          firstName = firstName.substring(0, firstNameChars)
+        }
+        
+        if (lastNameChars > 0) {
+          lastName = lastName.substring(0, lastNameChars)
+        }
+        
+        if (swapNames) {
+          email = `${lastName}${delimiter}${firstName}@${cleanPostfix}`.toLowerCase()
+        } else {
+          email = `${firstName}${delimiter}${lastName}@${cleanPostfix}`.toLowerCase()
+        }
+      } else {
+        email = `${firstName[0]}${delimiter}${lastName}@${cleanPostfix}`.toLowerCase()
+      }
     } else if (words.length === 1) {
-      let cleanPostfix = postfix ? postfix.replace(/^@/, "") : "example.com"
       email = `${words[0]}@${cleanPostfix}`.toLowerCase()
     }
     users.push({ email, name: fullName, link, info, geoloc, current })
@@ -166,6 +189,10 @@ async function leakedInParseListener(request, sender, sendResponse) {
     if (window.leakedInParseInProgress) return
     window.leakedInParseInProgress = true
     const { from, to, postfix, delimiter } = request
+    const firstNameChars = isNaN(request.firstNameChars) ? 1 : request.firstNameChars
+    const lastNameChars = isNaN(request.lastNameChars) ? 0 : request.lastNameChars
+    const swapNames = request.swapNames === true
+    const emailSettings = { firstNameChars, lastNameChars, swapNames }
     let allUsers = []
     let totalPeopleCount = 0
     let pagesDone = 0
@@ -183,12 +210,12 @@ async function leakedInParseListener(request, sender, sendResponse) {
       await new Promise(r => setTimeout(r, 500))
       window.scrollTo(0, 0)
       await new Promise(r => setTimeout(r, 300))
-      const users = await parseCurrentPage(postfix, delimiter)
+      const users = await parseCurrentPage(postfix, delimiter, emailSettings)
       allUsers = allUsers.concat(users)
       totalPeopleCount += users.length
       pagesDone++
-      chrome.runtime.sendMessage({ action: "updateProgress", pagesDone })
-      chrome.runtime.sendMessage({ action: "updatePeopleCount", peopleCount: totalPeopleCount })
+      chrome.runtime.sendMessage({ action: "updateProgress", pagesDone }).catch(() => {})
+      chrome.runtime.sendMessage({ action: "updatePeopleCount", peopleCount: totalPeopleCount }).catch(() => {})
       if (pageNum === to) break
       const nextPage = pageNum + 1
       const found = await clickPageButton(nextPage)
@@ -265,10 +292,10 @@ async function leakedInParseListener(request, sender, sendResponse) {
           entries: allUsers,
           postfix: postfix
         }
-      })
+      }).catch(() => {})
     } catch (e) {}
-    chrome.runtime.sendMessage({ action: "openHistory" })
-    chrome.runtime.sendMessage({ action: "leakedinDone" })
+    chrome.runtime.sendMessage({ action: "openHistory" }).catch(() => {})
+    chrome.runtime.sendMessage({ action: "leakedinDone" }).catch(() => {})
     window.leakedInParseInProgress = false
   }
 }

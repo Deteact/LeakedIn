@@ -16,6 +16,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnHistoryMessage = document.getElementById("btn-history-message")
   const btnGotoLinkedin = document.getElementById("goto-linkedin")
   const emailPreview = document.getElementById("email-preview-value")
+  const firstNameCharsInput = document.getElementById("firstNameChars")
+  const lastNameCharsInput = document.getElementById("lastNameChars")
+  const swapNamesCheck = document.getElementById("swapNames")
   let totalPages = 1
   let totalPeople = 0
   let lastPagesDone = 0
@@ -103,14 +106,26 @@ document.addEventListener("DOMContentLoaded", () => {
   })
 
   if (chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get({ postfix: "example.com", delimiter: "" }, result => {
+    chrome.storage.local.get({ 
+      postfix: "example.com", 
+      delimiter: "",
+      firstNameChars: 1,
+      lastNameChars: 0,
+      swapNames: false
+    }, result => {
       postfixInput.value = result.postfix
       delimiterInput.value = result.delimiter
+      firstNameCharsInput.value = result.firstNameChars
+      lastNameCharsInput.value = result.lastNameChars
+      swapNamesCheck.checked = result.swapNames
       updateEmailPreview()
     })
   } else {
     postfixInput.value = "example.com"
     delimiterInput.value = ""
+    firstNameCharsInput.value = 1
+    lastNameCharsInput.value = 0
+    swapNamesCheck.checked = false
   }
 
   postfixInput.addEventListener("input", e => {
@@ -123,6 +138,29 @@ document.addEventListener("DOMContentLoaded", () => {
   delimiterInput.addEventListener("input", e => {
     if (chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ delimiter: e.target.value })
+    }
+    updateEmailPreview()
+  })
+
+  firstNameCharsInput.addEventListener("input", e => {
+    const val = parseInt(e.target.value, 10)
+    if (chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ firstNameChars: isNaN(val) ? 1 : val })
+    }
+    updateEmailPreview()
+  })
+
+  lastNameCharsInput.addEventListener("input", e => {
+    const val = parseInt(e.target.value, 10)
+    if (chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ lastNameChars: isNaN(val) ? 0 : val })
+    }
+    updateEmailPreview()
+  })
+
+  swapNamesCheck.addEventListener("change", e => {
+    if (chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ swapNames: e.target.checked })
     }
     updateEmailPreview()
   })
@@ -147,17 +185,32 @@ document.addEventListener("DOMContentLoaded", () => {
     totalPages = Math.max(1, toNum - fromNum + 1)
     const postfix = postfixInput.value.trim()
     const delimiter = delimiterInput.value.trim()
+    const firstNameChars = parseInt(firstNameCharsInput.value, 10)
+    const lastNameChars = parseInt(lastNameCharsInput.value, 10)
+    const swapNames = swapNamesCheck.checked === true
+    
+    const safeFirstNameChars = isNaN(firstNameChars) ? 1 : firstNameChars
+    const safeLastNameChars = isNaN(lastNameChars) ? 0 : lastNameChars
+    
     if (chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ postfix: postfix })
-      chrome.storage.local.set({ delimiter: delimiter })
+      chrome.storage.local.set({ 
+        postfix: postfix,
+        delimiter: delimiter,
+        firstNameChars: safeFirstNameChars,
+        lastNameChars: safeLastNameChars,
+        swapNames: swapNames
+      })
     }
     chrome.runtime.sendMessage({
       action: "startParse",
       from: fromNum,
       to: toNum,
       postfix: postfix,
-      delimiter: delimiter
-    })
+      delimiter: delimiter,
+      firstNameChars: safeFirstNameChars,
+      lastNameChars: safeLastNameChars,
+      swapNames: swapNames
+    }).catch(() => {})
     setParsingUIState(true)
     document.getElementById("progress-bar-inner").style.width = "0%"
     progressText.textContent = "LeakedIn is starting..."
@@ -176,7 +229,27 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateEmailPreview() {
     const postfix = postfixInput.value.trim() || "example.com"
     const delimiter = delimiterInput.value || ""
-    const email = `j${delimiter}smith@${postfix}`
-    emailPreview.textContent = email
+    const firstNameChars = parseInt(firstNameCharsInput.value, 10)
+    const lastNameChars = parseInt(lastNameCharsInput.value, 10)
+    const swapNames = swapNamesCheck.checked === true
+    
+    let firstName = "john"
+    let lastName = "smith"
+    
+    if (!isNaN(firstNameChars) && firstNameChars > 0) {
+      firstName = "john".substring(0, firstNameChars)
+    }
+    
+    if (!isNaN(lastNameChars) && lastNameChars > 0) {
+      lastName = "smith".substring(0, lastNameChars)
+    }
+    
+    let email
+    if (swapNames) {
+      email = `${lastName}${delimiter}${firstName}@${postfix}`
+    } else {
+      email = `${firstName}${delimiter}${lastName}@${postfix}`
+    }
+    emailPreview.textContent = email.toLowerCase()
   }
 })

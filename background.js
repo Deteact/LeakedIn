@@ -19,7 +19,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           from: msg.from,
           to: msg.to,
           postfix: msg.postfix,
-          delimiter: msg.delimiter
+          delimiter: msg.delimiter,
+          firstNameChars: msg.firstNameChars,
+          lastNameChars: msg.lastNameChars,
+          swapNames: msg.swapNames
         })
       }
     })
