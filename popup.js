@@ -1,6 +1,7 @@
 // popup.js
 document.addEventListener("DOMContentLoaded", () => {
   const parseButton = document.getElementById("btn-parse")
+  const stopButton = document.getElementById("btn-stop")
   const downloadButton = document.getElementById("btn-dn")
   const formContainer = document.getElementById("form-container")
   const loadingContainer = document.getElementById("loading-container")
@@ -111,13 +112,17 @@ document.addEventListener("DOMContentLoaded", () => {
       delimiter: "",
       firstNameChars: 1,
       lastNameChars: 0,
-      swapNames: false
+      swapNames: false,
+      fromPage: 1,
+      toPage: 1
     }, result => {
       postfixInput.value = result.postfix
       delimiterInput.value = result.delimiter
       firstNameCharsInput.value = result.firstNameChars
       lastNameCharsInput.value = result.lastNameChars
       swapNamesCheck.checked = result.swapNames
+      fromNumInput.value = result.fromPage
+      toNumInput.value = result.toPage
       updateEmailPreview()
     })
   } else {
@@ -126,6 +131,8 @@ document.addEventListener("DOMContentLoaded", () => {
     firstNameCharsInput.value = 1
     lastNameCharsInput.value = 0
     swapNamesCheck.checked = false
+    fromNumInput.value = 1
+    toNumInput.value = 1
   }
 
   postfixInput.addEventListener("input", e => {
@@ -163,6 +170,20 @@ document.addEventListener("DOMContentLoaded", () => {
       chrome.storage.local.set({ swapNames: e.target.checked })
     }
     updateEmailPreview()
+  })
+
+  fromNumInput.addEventListener("input", e => {
+    const val = parseInt(e.target.value, 10)
+    if (chrome.storage && chrome.storage.local && !isNaN(val)) {
+      chrome.storage.local.set({ fromPage: val })
+    }
+  })
+
+  toNumInput.addEventListener("input", e => {
+    const val = parseInt(e.target.value, 10)
+    if (chrome.storage && chrome.storage.local && !isNaN(val)) {
+      chrome.storage.local.set({ toPage: val })
+    }
   })
 
   chrome.runtime.onMessage.addListener(message => {
@@ -214,6 +235,11 @@ document.addEventListener("DOMContentLoaded", () => {
     setParsingUIState(true)
     document.getElementById("progress-bar-inner").style.width = "0%"
     progressText.textContent = "LeakedIn is starting..."
+  })
+
+  stopButton.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "stopParse" }).catch(() => {})
+    progressText.textContent = "Stopping and saving results..."
   })
 
   downloadButton.addEventListener("click", () => {})

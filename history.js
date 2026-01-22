@@ -41,8 +41,8 @@ function renderTable(entries) {
           u.link || ""
         ]);
       });
-      const tsv = rows.map(r => r.join("\t")).join("\n");
-      const blob = new Blob([tsv], { type: "text/tab-separated-values" });
+      const tsv = rows.map(r => r.join("\t")).join("\r\n");
+      const blob = new Blob([new TextEncoder().encode(tsv)], { type: "text/tab-separated-values;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

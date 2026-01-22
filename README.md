@@ -19,7 +19,7 @@
 
 ## Screenshots
 
-![search](https://github.com/user-attachments/assets/86bf088d-ed1b-4ae9-a9f6-98226ebf6667)
+![search](https://github.com/user-attachments/assets/78678b4c-0950-4031-999a-90e89cac8454)
 ![history](https://github.com/user-attachments/assets/c7df9a94-27a2-405f-ae6c-485a466cedea)
 ![tsv](https://github.com/user-attachments/assets/027a8716-1f7a-425e-aadb-8427ec17ef92)
 

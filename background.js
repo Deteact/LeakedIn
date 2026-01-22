@@ -67,5 +67,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "leakedinDone") {
     isParsing = false
   }
+  if (msg.action === "stopParse") {
+    isParsing = false
+    chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+      const tab = tabs[0]
+      if (tab && tab.id) {
+        chrome.tabs.sendMessage(tab.id, { action: "stopParse" }).catch(() => {})
+      }
+    })
+  }
   return true
 })

@@ -185,6 +185,26 @@ button:hover {
   background: linear-gradient(90deg, #0059d6 0%, #00aaff 100%);
 }
 
+
+#btn-stop {
+  background: linear-gradient(90deg, #297eff 0%, #00c6ff 100%);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 0;
+  font-size: 15px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 8px rgba(41,126,255,0.08);
+  transition: background 0.2s;
+  width: 100%;
+  cursor: pointer;
+}
+
+#btn-stop:hover {
+  background: linear-gradient(90deg, #0059d6 0%, #00aaff 100%);
+}
+
 #progress-text {
   font-size: 14px;
   color: #297eff;

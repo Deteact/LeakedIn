@@ -61,40 +61,83 @@ function sleepRandom(minMs, maxMs) {
   return new Promise(resolve => setTimeout(resolve, rnd))
 }
 async function parseCurrentPage(postfix, delimiter, emailSettings) {
-  const results = document.querySelectorAll('div[data-view-name="people-search-result"]')
+  let results = document.querySelectorAll('div[data-view-name="people-search-result"]')
+  
+  if (results.length === 0) {
+    results = document.querySelectorAll('[data-chameleon-result-urn]')
+  }
+  
   const users = []
+  const isNewStructure = results.length > 0 && results[0].getAttribute('data-view-name') === 'people-search-result'
+  
   results.forEach(result => {
-    const titleLink = result.querySelector('a[data-view-name="search-result-lockup-title"]')
-    if (!titleLink) return
-    const fullNameRaw = titleLink.textContent.trim()
+    let titleLink = result.querySelector('a[data-view-name="search-result-lockup-title"]')
+    let fullNameRaw = ""
+    
+    if (titleLink) {
+      fullNameRaw = titleLink.textContent.trim()
+    } else {
+      const nameSpan = result.querySelector('span[aria-hidden="true"]')
+      if (nameSpan) {
+        titleLink = nameSpan.closest("a")
+        fullNameRaw = nameSpan.textContent.trim()
+      }
+    }
+    
+    if (!titleLink || !fullNameRaw) return
     const fullName = transliterateNonLatin(fullNameRaw)
     let link = titleLink.getAttribute("data-original-url") || titleLink.href
     if (link) {
       link = link.split("?")[0]
     }
-    const allParagraphs = Array.from(result.querySelectorAll("p"))
+    
     let info = ""
     let geoloc = ""
     let current = ""
-    const contentParagraphs = allParagraphs.filter(p => {
-      const text = p.innerText.trim()
-      if (p.querySelector('a[data-view-name="search-result-lockup-title"]')) return false
-      if (!text || text.match(/^[•\s]*\d(st|nd|rd|th)\+?$/)) return false
-      return true
-    })
-    contentParagraphs.forEach((p, index) => {
-      const text = p.innerText.trim().replace(/\n+/g, "; ").replace(/\s+/g, " ").replace(/;\s+;/g, ";").trim()
-      if (!text) return
-      if (text.startsWith("Current:") || text.startsWith("Past:")) {
-        current = text
-      }
-      else if (index === 0) {
-        info = text
-      }
-      else if (index === 1 && !text.startsWith("Current:") && !text.startsWith("Past:")) {
-        geoloc = text
-      }
-    })
+    
+    if (isNewStructure) {
+      const allParagraphs = Array.from(result.querySelectorAll("p"))
+      const contentParagraphs = allParagraphs.filter(p => {
+        const text = p.innerText.trim()
+        if (p.querySelector('a[data-view-name="search-result-lockup-title"]')) return false
+        if (!text || text.match(/^[•\s]*\d(st|nd|rd|th)\+?$/)) return false
+        return true
+      })
+      contentParagraphs.forEach((p, index) => {
+        const text = p.innerText.trim().replace(/\n+/g, "; ").replace(/\s+/g, " ").replace(/;\s+;/g, ";").trim()
+        if (!text) return
+        if (text.startsWith("Current:") || text.startsWith("Past:")) {
+          current = text
+        }
+        else if (index === 0) {
+          info = text
+        }
+        else if (index === 1 && !text.startsWith("Current:") && !text.startsWith("Past:")) {
+          geoloc = text
+        }
+      })
+    } else {
+      const allDivs = Array.from(result.querySelectorAll("div.t-14"))
+      const contentDivs = allDivs.filter(div => {
+        const text = div.innerText.trim()
+        if (!text || text.match(/^[•\s]*\d(st|nd|rd|th)\+?$/)) return false
+        if (div.querySelector('a')) return false
+        return true
+      })
+      contentDivs.forEach((div, index) => {
+        const text = div.innerText.trim().replace(/\n+/g, "; ").replace(/\s+/g, " ").replace(/;\s+;/g, ";").trim()
+        if (!text) return
+        if (text.startsWith("Current:") || text.startsWith("Past:")) {
+          current = text
+        }
+        else if (index === 0) {
+          info = text
+        }
+        else if (index === 1 && !text.startsWith("Current:") && !text.startsWith("Past:")) {
+          geoloc = text
+        }
+      })
+    }
     const words = fullName.split(" ")
     let email = ""
     let cleanPostfix = postfix ? postfix.replace(/^@/, "") : "example.com"
@@ -138,7 +181,7 @@ function toTSV(allUsers, postfix, delimiter) {
    
     rows.push([u.email, u.name, u.geoloc, u.current, u.info, u.link])
   })
-  return rows.map(r => r.join("\t")).join("\n")
+  return rows.map(r => r.join("\t")).join("\r\n")
 }
 function triggerDownload(tsvContent, filename) {
   const blob = new Blob([new TextEncoder().encode(tsvContent)], {
@@ -153,8 +196,99 @@ function triggerDownload(tsvContent, filename) {
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
+
+async function saveAndFinish(allUsers, postfix, delimiter) {
+  if (allUsers.length === 0) {
+    chrome.runtime.sendMessage({ action: "leakedinDone" }).catch(() => {})
+    window.leakedInParseInProgress = false
+    window.leakedInStopRequested = false
+    return
+  }
+  
+  const tsv = toTSV(allUsers, postfix, delimiter)
+  const date = new Date().toISOString().split("T")[0]
+  const filename = `leakedin-${postfix}-${allUsers.length}-${date}.tsv`
+  
+  try {
+    const url = new URL(window.location.href)
+    const params = new URLSearchParams(url.search)
+    const keyword = params.get("keywords") || ""
+    let companyIds = []
+    let companyNamesArray = []
+    const companyParam = params.get("currentCompany")
+    if (companyParam) {
+      try {
+        companyIds = JSON.parse(companyParam)
+      } catch (e) {
+        companyIds = companyParam.replace(/\[|\]|"/g, "").split(",").filter(x => x)
+      }
+    }
+    let needToCloseDropdown = false
+    const allFilterButtons = document.querySelectorAll('div[data-view-name="search-filter-top-bar-select"]')
+    for (const btn of allFilterButtons) {
+      const label = btn.querySelector("label")
+      if (label && label.innerText.includes("Current companies")) {
+        const checkbox = btn.querySelector('input[type="checkbox"]')
+        if (checkbox && checkbox.checked && btn.getAttribute("aria-expanded") === "false") {
+          btn.click()
+          needToCloseDropdown = true
+          await new Promise(r => setTimeout(r, 800))
+          break
+        }
+      }
+    }
+    const checkedCompanyItems = document.querySelectorAll('div[data-view-name="search-filter-top-bar-menu-item"][aria-checked="true"]')
+    checkedCompanyItems.forEach(item => {
+      const paragraphs = item.querySelectorAll("p")
+      paragraphs.forEach(p => {
+        const text = p.innerText.trim()
+        if (text && text.length > 1 && text.length < 100 && !text.match(/^\d+$/) && !text.includes('•') && !companyNamesArray.includes(text)) {
+          companyNamesArray.push(text)
+        }
+      })
+    })
+    if (needToCloseDropdown) {
+      for (const btn of allFilterButtons) {
+        const label = btn.querySelector("label")
+        if (label && label.innerText.includes("Current companies") && btn.getAttribute("aria-expanded") === "true") {
+          btn.click()
+          await new Promise(r => setTimeout(r, 200))
+          break
+        }
+      }
+    }
+    let companyNamesString = ""
+    if (companyNamesArray.length > 0 && companyIds.length > 0) {
+      companyNamesString = `${companyNamesArray.join(", ")} [${companyIds.join(", ")}]`
+    } else if (companyNamesArray.length > 0) {
+      companyNamesString = companyNamesArray.join(", ")
+    } else if (companyIds.length > 0) {
+      companyNamesString = `[${companyIds.join(", ")}]`
+    }
+    chrome.runtime.sendMessage({
+      action: "saveSearchHistory",
+      data: {
+        date: new Date().toISOString(),
+        keyword: keyword || "",
+        companyIds: companyIds || [],
+        companyNames: companyNamesString,
+        employees: allUsers.length,
+        entries: allUsers,
+        postfix: postfix
+      }
+    }).catch(() => {})
+  } catch (e) {}
+  
+  chrome.runtime.sendMessage({ action: "openHistory" }).catch(() => {})
+  chrome.runtime.sendMessage({ action: "leakedinDone" }).catch(() => {})
+  window.leakedInParseInProgress = false
+  window.leakedInStopRequested = false
+}
 if (typeof window.leakedInParseInProgress === "undefined") {
   window.leakedInParseInProgress = false
+}
+if (typeof window.leakedInStopRequested === "undefined") {
+  window.leakedInStopRequested = false
 }
 async function waitForSearchResults() {
   for (let i = 0; i < 20; i++) {
@@ -185,6 +319,10 @@ async function clickPageButton(pageNum) {
   return false
 }
 async function leakedInParseListener(request, sender, sendResponse) {
+  if (request.action === "stopParse") {
+    window.leakedInStopRequested = true
+    return
+  }
   if (request.action === "startParse") {
     if (window.leakedInParseInProgress) return
     window.leakedInParseInProgress = true
@@ -203,7 +341,11 @@ async function leakedInParseListener(request, sender, sendResponse) {
       await new Promise(r => setTimeout(r, 500))
     }
     let pageNum = from
+    window.leakedInStopRequested = false
     while (pageNum <= to) {
+      if (window.leakedInStopRequested) {
+        break
+      }
       window.scrollTo(0, 0)
       await new Promise(r => setTimeout(r, 300))
       window.scrollTo(0, document.body.scrollHeight)
@@ -217,86 +359,15 @@ async function leakedInParseListener(request, sender, sendResponse) {
       chrome.runtime.sendMessage({ action: "updateProgress", pagesDone }).catch(() => {})
       chrome.runtime.sendMessage({ action: "updatePeopleCount", peopleCount: totalPeopleCount }).catch(() => {})
       if (pageNum === to) break
+      if (window.leakedInStopRequested) {
+        break
+      }
       const nextPage = pageNum + 1
       const found = await clickPageButton(nextPage)
       if (!found) break
       pageNum++
     }
-    const tsv = toTSV(allUsers, postfix, delimiter)
-    const date = new Date().toISOString().split("T")[0]
-    const filename = `leakedin-${postfix}-${allUsers.length}-${date}.tsv`
-    try {
-      const url = new URL(window.location.href)
-      const params = new URLSearchParams(url.search)
-      const keyword = params.get("keywords") || ""
-      let companyIds = []
-      let companyNamesArray = []
-      const companyParam = params.get("currentCompany")
-      if (companyParam) {
-        try {
-          companyIds = JSON.parse(companyParam)
-        } catch (e) {
-          companyIds = companyParam.replace(/\[|\]|"/g, "").split(",").filter(x => x)
-        }
-      }
-      let needToCloseDropdown = false
-      const allFilterButtons = document.querySelectorAll('div[data-view-name="search-filter-top-bar-select"]')
-      for (const btn of allFilterButtons) {
-        const label = btn.querySelector("label")
-        if (label && label.innerText.includes("Current companies")) {
-          const checkbox = btn.querySelector('input[type="checkbox"]')
-          if (checkbox && checkbox.checked && btn.getAttribute("aria-expanded") === "false") {
-            btn.click()
-            needToCloseDropdown = true
-            await new Promise(r => setTimeout(r, 800))
-            break
-          }
-        }
-      }
-      const checkedCompanyItems = document.querySelectorAll('div[data-view-name="search-filter-top-bar-menu-item"][aria-checked="true"]')
-      checkedCompanyItems.forEach(item => {
-        const paragraphs = item.querySelectorAll("p")
-        paragraphs.forEach(p => {
-          const text = p.innerText.trim()
-          if (text && text.length > 1 && text.length < 100 && !text.match(/^\d+$/) && !text.includes('•') && !companyNamesArray.includes(text)) {
-            companyNamesArray.push(text)
-          }
-        })
-      })
-      if (needToCloseDropdown) {
-        for (const btn of allFilterButtons) {
-          const label = btn.querySelector("label")
-          if (label && label.innerText.includes("Current companies") && btn.getAttribute("aria-expanded") === "true") {
-            btn.click()
-            await new Promise(r => setTimeout(r, 200))
-            break
-          }
-        }
-      }
-      let companyNamesString = ""
-      if (companyNamesArray.length > 0 && companyIds.length > 0) {
-        companyNamesString = `${companyNamesArray.join(", ")} [${companyIds.join(", ")}]`
-      } else if (companyNamesArray.length > 0) {
-        companyNamesString = companyNamesArray.join(", ")
-      } else if (companyIds.length > 0) {
-        companyNamesString = `[${companyIds.join(", ")}]`
-      }
-      chrome.runtime.sendMessage({
-        action: "saveSearchHistory",
-        data: {
-          date: new Date().toISOString(),
-          keyword: keyword || "",
-          companyIds: companyIds || [],
-          companyNames: companyNamesString,
-          employees: allUsers.length,
-          entries: allUsers,
-          postfix: postfix
-        }
-      }).catch(() => {})
-    } catch (e) {}
-    chrome.runtime.sendMessage({ action: "openHistory" }).catch(() => {})
-    chrome.runtime.sendMessage({ action: "leakedinDone" }).catch(() => {})
-    window.leakedInParseInProgress = false
+    await saveAndFinish(allUsers, postfix, delimiter)
   }
 }
 if (window.leakedInListenerAdded) {
